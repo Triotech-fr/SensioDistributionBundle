@@ -136,12 +136,12 @@ class ScriptHandler
             return;
         }
 
-        $warmup = '';
+        $args = array();
         if (!$options['symfony-cache-warmup']) {
-            $warmup = ' --no-warmup';
+            $args[] = '--no-warmup';
         }
 
-        static::executeCommand($event, $consoleDir, 'cache:clear'.$warmup, $options['process-timeout']);
+        static::executeCommand($event, $consoleDir, 'cache:clear', $options['process-timeout'], $args);
     }
 
     /**
@@ -167,18 +167,21 @@ class ScriptHandler
 
         $webDir = $options['symfony-web-dir'];
 
-        $symlink = '';
+        $args = array();
         if ('symlink' == $options['symfony-assets-install']) {
-            $symlink = '--symlink ';
+            $args[] = '--symlink';
         } elseif ('relative' == $options['symfony-assets-install']) {
-            $symlink = '--symlink --relative ';
+            $args[] = '--symlink';
+            $args[] = '--relative';
         }
 
         if (!static::hasDirectory($event, 'symfony-web-dir', $webDir, 'install assets')) {
             return;
         }
 
-        static::executeCommand($event, $consoleDir, 'assets:install '.$symlink.ProcessExecutor::escape($webDir), $options['process-timeout']);
+        $args[] = $webDir;
+
+        static::executeCommand($event, $consoleDir, 'assets:install', $options['process-timeout'], $args);
     }
 
     /**
@@ -279,16 +282,27 @@ EOF
             , $bootstrapContent));
     }
 
-    protected static function executeCommand(Event $event, $consoleDir, $cmd, $timeout = 300)
+    protected static function executeCommand(Event $event, $consoleDir, $cmd, $timeout = 300, $cmdArgs = array())
     {
-        $php = ProcessExecutor::escape(static::getPhp(false));
-        $phpArgs = implode(' ', array_map(array('Composer\Util\ProcessExecutor', 'escape'), static::getPhpArguments()));
-        $console = ProcessExecutor::escape($consoleDir.'/console');
-        if ($event->getIO()->isDecorated()) {
-            $console .= ' --ansi';
+        $commandLine = array(static::getPhp(false));
+
+        foreach (static::getPhpArguments() as $phpArgument) {
+            $commandLine[] = $phpArgument;
         }
 
-        $process = new Process($php.($phpArgs ? ' '.$phpArgs : '').' '.$console.' '.$cmd, null, null, null, $timeout);
+        $commandLine[] = $consoleDir.'/console';
+
+        if ($event->getIO()->isDecorated()) {
+            $commandLine[] = '--ansi';
+        }
+
+        $commandLine[] = $cmd;
+
+        foreach ($cmdArgs as $cmdArg) {
+            $commandLine[] = $cmdArg;
+        }
+
+        $process = new Process($commandLine, null, null, null, $timeout);
         $process->run(function ($type, $buffer) use ($event) { $event->getIO()->write($buffer, false); });
         if (!$process->isSuccessful()) {
             throw new \RuntimeException(sprintf("An error occurred when executing the \"%s\" command:\n\n%s\n\n%s", ProcessExecutor::escape($cmd), self::removeDecoration($process->getOutput()), self::removeDecoration($process->getErrorOutput())));
@@ -297,17 +311,22 @@ EOF
 
     protected static function executeBuildBootstrap(Event $event, $bootstrapDir, $autoloadDir, $timeout = 300)
     {
-        $php = ProcessExecutor::escape(static::getPhp(false));
-        $phpArgs = implode(' ', array_map(array('Composer\Util\ProcessExecutor', 'escape'), static::getPhpArguments()));
-        $cmd = ProcessExecutor::escape(__DIR__.'/../Resources/bin/build_bootstrap.php');
-        $bootstrapDir = ProcessExecutor::escape($bootstrapDir);
-        $autoloadDir = ProcessExecutor::escape($autoloadDir);
-        $useNewDirectoryStructure = '';
-        if (static::useNewDirectoryStructure(static::getOptions($event))) {
-            $useNewDirectoryStructure = ProcessExecutor::escape('--use-new-directory-structure');
+        $commandLine = array(static::getPhp(false));
+
+        foreach (static::getPhpArguments() as $phpArgument) {
+            $commandLine[] = $phpArgument;
         }
 
-        $process = new Process($php.($phpArgs ? ' '.$phpArgs : '').' '.$cmd.' '.$bootstrapDir.' '.$autoloadDir.' '.$useNewDirectoryStructure, getcwd(), null, null, $timeout);
+        $commandLine[] = __DIR__.'/../Resources/bin/build_bootstrap.php';
+        $commandLine[] = $bootstrapDir;
+        $commandLine[] = $autoloadDir;
+
+        if (static::useNewDirectoryStructure(static::getOptions($event))) {
+            $commandLine[] = '--use-new-directory-structure';
+        }
+
+        $process = new Process($commandLine, getcwd(), null, null, $timeout);
+
         $process->run(function ($type, $buffer) use ($event) { $event->getIO()->write($buffer, false); });
         if (!$process->isSuccessful()) {
             throw new \RuntimeException('An error occurred when generating the bootstrap file.');
